@@ -2,6 +2,7 @@ import { Request, Response } from "express"
 import bcrypt from "bcrypt"
 import jwt from "jsonwebtoken"
 import { User } from "../models/User"
+import { BlacklistedToken } from "../models/BlacklistedToken"
 import {
   CONFLICT,
   UNAUTHORIZED,
@@ -10,6 +11,7 @@ import {
   INTERNAL_SERVER_ERROR,
   BAD_REQUEST,
 } from "../utils/http-status"
+import { AuthRequest } from "../middleware/auth"
 
 const JWT_SECRET = "your-super-secret-jwt-key-change-this-in-production-12345"
 
@@ -58,6 +60,7 @@ export const signup = async (req: Request, res: Response): Promise<void> => {
     res.status(CREATED).json({
       success: true,
       data: { token },
+      token: token,
     })
   } catch (error) {
     res.status(INTERNAL_SERVER_ERROR).json({
@@ -116,6 +119,7 @@ export const signin = async (req: Request, res: Response): Promise<void> => {
     res.status(OK).json({
       success: true,
       data: { token },
+      token: token,
     })
   } catch (error) {
     res.status(INTERNAL_SERVER_ERROR).json({
@@ -128,13 +132,37 @@ export const signin = async (req: Request, res: Response): Promise<void> => {
   }
 }
 
-export const signout = async (req: Request, res: Response): Promise<void> => {
+export const signout = async (
+  req: AuthRequest,
+  res: Response
+): Promise<void> => {
   try {
+    // Get the token from the Authorization header
+    const authHeader = req.headers.authorization
+    const token = authHeader && authHeader.split(" ")[1]
+
+    if (token && req.user) {
+      // Decode the token to get expiration time
+      const decoded = jwt.decode(token) as any
+      const expiresAt = new Date(decoded.exp * 1000) // Convert Unix timestamp to Date
+
+      // Add token to blacklist
+      await BlacklistedToken.create({
+        token,
+        userId: String(req.user._id),
+        expiresAt,
+      })
+
+      console.log("Token blacklisted successfully for user:", req.user._id)
+    }
+
     res.status(OK).json({
       success: true,
       data: { message: "Successfully signed out" },
+      token: null,
     })
   } catch (error) {
+    console.error("Signout error:", error)
     res.status(INTERNAL_SERVER_ERROR).json({
       success: false,
       error: {

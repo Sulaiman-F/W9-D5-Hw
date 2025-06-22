@@ -1,7 +1,9 @@
 import { Request, Response, NextFunction } from "express"
 import jwt from "jsonwebtoken"
 import { User, IUser } from "../models/User"
+import { BlacklistedToken } from "../models/BlacklistedToken"
 import { UNAUTHORIZED } from "../utils/http-status"
+
 export interface AuthRequest extends Request {
   user?: IUser
 }
@@ -25,6 +27,20 @@ export const authenticateToken = async (
       })
       return
     }
+
+    // Check if token is blacklisted
+    const blacklistedToken = await BlacklistedToken.findOne({ token })
+    if (blacklistedToken) {
+      res.status(UNAUTHORIZED).json({
+        success: false,
+        error: {
+          code: "TOKEN_BLACKLISTED",
+          message: "Token has been invalidated. Please sign in again.",
+        },
+      })
+      return
+    }
+
     const decoded = jwt.verify(
       token,
       "your-super-secret-jwt-key-change-this-in-production-12345"
