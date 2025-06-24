@@ -1,5 +1,6 @@
 import { Response } from "express"
 import { WeatherService } from "../services/weather.service"
+import { WeatherValidator } from "../utils/validators"
 import { AuthRequest } from "../middleware/auth"
 import {
   OK,
@@ -14,45 +15,27 @@ export const getCurrentWeather = async (
 ): Promise<void> => {
   try {
     const { lat, lon } = req.query
-    if (!lat || !lon) {
+
+    // Validate coordinates
+    const validation = WeatherValidator.validateCoordinates(
+      lat as string,
+      lon as string
+    )
+    if (!validation.isValid) {
       res.status(BAD_REQUEST).json({
         success: false,
         error: {
-          code: "MISSING_COORDINATES",
-          message: "Latitude and longitude are required",
+          code: "VALIDATION_ERROR",
+          message: validation.errors.join(", "),
         },
       })
       return
     }
+
     const latitude = parseFloat(lat as string)
     const longitude = parseFloat(lon as string)
 
-    if (isNaN(latitude) || isNaN(longitude)) {
-      res.status(BAD_REQUEST).json({
-        success: false,
-        error: {
-          code: "INVALID_COORDINATES",
-          message: "Invalid latitude or longitude format",
-        },
-      })
-      return
-    }
-    if (
-      latitude < -90 ||
-      latitude > 90 ||
-      longitude < -180 ||
-      longitude > 180
-    ) {
-      res.status(BAD_REQUEST).json({
-        success: false,
-        error: {
-          code: "COORDINATES_OUT_OF_RANGE",
-          message:
-            "Latitude must be between -90 and 90, longitude between -180 and 180",
-        },
-      })
-      return
-    }
+    // Call weather service
     const weatherData = await WeatherService.getCurrentWeather(
       req.user!,
       latitude,

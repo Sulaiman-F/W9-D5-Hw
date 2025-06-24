@@ -1,6 +1,6 @@
 import { Response } from "express"
-import { History } from "../models/History"
-import { Weather } from "../models/Weather"
+import { HistoryService } from "../services/history.service"
+import { HistoryValidator } from "../utils/validators"
 import { AuthRequest } from "../middleware/auth"
 import { OK, BAD_REQUEST, INTERNAL_SERVER_ERROR } from "../utils/http-status"
 
@@ -9,92 +9,75 @@ export const getHistory = async (
   res: Response
 ): Promise<void> => {
   try {
-    const {
-      skip = "0",
-      limit = "10",
-      sort = "-requestedAt",
-      from,
-      to,
-      lat,
-      lon,
-      count,
-    } = req.query
-    if (count === "true") {
-      const filter: any = { user: req.user!._id }
-      if (from || to) {
-        filter.requestedAt = {}
-        if (from) filter.requestedAt.$gte = new Date(from as string)
-        if (to) filter.requestedAt.$lte = new Date(to as string)
-      }
-      if (lat) filter.lat = parseFloat(lat as string)
-      if (lon) filter.lon = parseFloat(lon as string)
+    const query = req.query
 
-      const total = await History.countDocuments(filter)
-
-      res.status(OK).json({
-        success: true,
-        data: { total },
+    // Validate query parameters
+    const validation = HistoryValidator.validateHistoryQuery(query)
+    if (!validation.isValid) {
+      res.status(BAD_REQUEST).json({
+        success: false,
+        error: {
+          code: "VALIDATION_ERROR",
+          message: validation.errors.join(", "),
+        },
       })
       return
     }
 
-    const skipNum = parseInt(skip as string) || 0
-    const limitNum = Math.min(parseInt(limit as string) || 10, 100) // Max 100 items
-
-    const filter: any = { user: req.user!._id }
-
-    if (from || to) {
-      filter.requestedAt = {}
-      if (from) {
-        filter.requestedAt.$gte = new Date(from as string)
+    // Check if this is a count request
+    if (query.count === "true") {
+      const filter = {
+        userId: String((req.user as any)._id),
+        from: query.from ? new Date(query.from as string) : undefined,
+        to: query.to ? new Date(query.to as string) : undefined,
+        lat: query.lat ? parseFloat(query.lat as string) : undefined,
+        lon: query.lon ? parseFloat(query.lon as string) : undefined,
       }
-      if (to) {
-        filter.requestedAt.$lte = new Date(to as string)
+
+      const result = await HistoryService.getHistoryCount(filter)
+
+      if (!result.success) {
+        res.status(INTERNAL_SERVER_ERROR).json({
+          success: false,
+          error: result.error,
+        })
+        return
       }
+
+      res.status(OK).json({
+        success: true,
+        count: result.count,
+      })
+      return
     }
 
-    if (lat) filter.lat = parseFloat(lat as string)
-    if (lon) filter.lon = parseFloat(lon as string)
-
-    let sortOption: any = { requestedAt: -1 } // Default sort
-    if (sort) {
-      const sortStr = sort as string
-      if (sortStr.startsWith("-")) {
-        const field = sortStr.substring(1)
-        sortOption = { [field]: -1 }
-      } else {
-        sortOption = { [sortStr]: 1 }
-      }
+    // Regular history request
+    const historyQuery = {
+      skip: parseInt(query.skip as string) || 0,
+      limit: parseInt(query.limit as string) || 10,
+      sort: (query.sort as string) || "-requestedAt",
+      filter: {
+        userId: String((req.user as any)._id),
+        from: query.from ? new Date(query.from as string) : undefined,
+        to: query.to ? new Date(query.to as string) : undefined,
+        lat: query.lat ? parseFloat(query.lat as string) : undefined,
+        lon: query.lon ? parseFloat(query.lon as string) : undefined,
+      },
     }
 
-    const historyItems = await History.find(filter)
-      .sort(sortOption)
-      .skip(skipNum)
-      .limit(limitNum)
-      .populate("weather")
-      .lean()
+    const result = await HistoryService.getHistory(historyQuery)
 
-    const formattedHistory = historyItems.map((item: any) => ({
-      lat: item.lat,
-      lon: item.lon,
-      requestedAt: item.requestedAt,
-      weather: item.weather
-        ? {
-            source:
-              item.weather.fetchedAt > new Date(Date.now() - 30 * 60 * 1000)
-                ? "cache"
-                : "historical",
-            tempC: item.weather.data?.main?.temp || 0,
-            humidity: item.weather.data?.main?.humidity || 0,
-            description:
-              item.weather.data?.weather?.[0]?.description || "No description",
-          }
-        : null,
-    }))
+    if (!result.success) {
+      res.status(INTERNAL_SERVER_ERROR).json({
+        success: false,
+        error: result.error,
+      })
+      return
+    }
 
     res.status(OK).json({
       success: true,
-      data: formattedHistory,
+      data: result.data,
     })
   } catch (error: any) {
     console.error("History controller error:", error)
